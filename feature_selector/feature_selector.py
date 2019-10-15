@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 
 # model used for feature importances
-import lightgbm as lgb
+import lightgbm as lgbm
 
 # utility for early stopping with a validation set
 from sklearn.model_selection import train_test_split
@@ -71,7 +71,7 @@ class FeatureSelector():
         Records the zero importance features in the data according to the gbm
     
     record_low_importance : dataframe
-        Records the lowest importance features not needed to reach the threshold of cumulative importance according to the gbm
+        Records the lowest importance features not needed to reach the threshold of cumulative importance according to the lgbm
     
     
     Notes
@@ -124,11 +124,13 @@ class FeatureSelector():
         self.missing_stats = self.missing_stats.sort_values('missing_fraction', ascending = False)
 
         # Find the columns with a missing percentage above the threshold
+        # reset_index(): restore the index,revert to the default integer index ,change old index to common column 
+        # if having a column called index,changed to feature,if not,do not do anything
         record_missing = pd.DataFrame(missing_series[missing_series > missing_threshold]).reset_index().rename(columns = 
                                                                                                                {'index': 'feature', 
                                                                                                                 0: 'missing_fraction'})
 
-        to_drop = list(record_missing['feature'])
+        to_drop = list(record_missing['feature']) #feature which need to drop 
 
         self.record_missing = record_missing
         self.ops['missing'] = to_drop
@@ -147,7 +149,7 @@ class FeatureSelector():
         record_single_unique = pd.DataFrame(unique_counts[unique_counts == 1]).reset_index().rename(columns = {'index': 'feature', 
                                                                                                                 0: 'nunique'})
 
-        to_drop = list(record_single_unique['feature'])
+        to_drop = list(record_single_unique['feature']) #feature which need to drop 
     
         self.record_single_unique = record_single_unique
         self.ops['single_unique'] = to_drop
@@ -170,30 +172,30 @@ class FeatureSelector():
 
         one_hot : boolean, default = False
             Whether to one-hot encode the features before calculating the correlation coefficients
-
+        if one_hot is True, using one_hoted encoded features to calculate the correlation coefficients
+        if one_hot is False, using original features to calculate the correlation coefficients
         """
         
         self.correlation_threshold = correlation_threshold
         self.one_hot_correlated = one_hot
         
          # Calculate the correlations between every column
-        if one_hot:
-            
+        if one_hot: #using one_hot encoded features to calculate the correlation coefficients
             # One hot encoding
             features = pd.get_dummies(self.data)
             self.one_hot_features = [column for column in features.columns if column not in self.base_features]
 
             # Add one hot encoded data to original data
-            self.data_all = pd.concat([features[self.one_hot_features], self.data], axis = 1)
+            self.data_all = pd.concat([features[self.one_hot_features], self.data], axis = 1) # left and right concat
             
             corr_matrix = pd.get_dummies(features).corr()
 
-        else:
+        else: #using original features to calculate the correlation coefficients
             corr_matrix = self.data.corr()
         
         self.corr_matrix = corr_matrix
     
-        # Extract the upper triangle of the correlation matrix
+        # Extract the upper triangle of the correlation matrix, k=1 not included diagonal position
         upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k = 1).astype(np.bool))
         
         # Select the features with correlations above the threshold
@@ -201,7 +203,7 @@ class FeatureSelector():
         to_drop = [column for column in upper.columns if any(upper[column].abs() > correlation_threshold)]
 
         # Dataframe to hold correlated pairs
-        record_collinear = pd.DataFrame(columns = ['drop_feature', 'corr_feature', 'corr_value'])
+        record_collinear = pd.DataFrame(columns = ['drop_feature', 'corr_feature', 'corr_value']) #null dataframe
 
         # Iterate through the columns to drop to record pairs of correlated features
         for column in to_drop:
@@ -231,7 +233,7 @@ class FeatureSelector():
         """
         
         Identify the features with zero importance according to a gradient boosting machine.
-        The gbm can be trained with early stopping using a validation set to prevent overfitting. 
+        The lgbm can be trained with early stopping using a validation set to prevent overfitting. 
         The feature importances are averaged over `n_iterations` to reduce variance. 
         
         Uses the LightGBM implementation (http://lightgbm.readthedocs.io/en/latest/index.html)
@@ -257,7 +259,7 @@ class FeatureSelector():
         --------
         
         - Features are one-hot encoded to handle the categorical variables before training.
-        - The gbm is not optimized for any particular task and might need some hyperparameter tuning
+        - The lgbm is not optimized for any particular task and might need some hyperparameter tuning
         - Feature importances, including zero importance features, can change across runs
 
         """
@@ -291,11 +293,16 @@ class FeatureSelector():
         # Iterate through each fold
         for _ in range(n_iterations):
 
-            if task == 'classification':
-                model = lgb.LGBMClassifier(n_estimators=1000, learning_rate = 0.05, verbose = -1)
+            if task == 'bin_classification': #if binary , set objective='multiclass'
+                model = lgbm.LGBMClassifier(n_estimators=1000, learning_rate = 0.05, 
+                                           objective='binary',eval_metric = 'auc',num_class=1,verbose = -1)
+                
+            elif task == 'mul_classification': 
+                model = lgbm.LGBMClassifier(n_estimators=1000, learning_rate = 0.05, 
+                                           objective='multiclass',eval_metric = 'multi_logloss',num_class=4,verbose = -1)
 
             elif task == 'regression':
-                model = lgb.LGBMRegressor(n_estimators=1000, learning_rate = 0.05, verbose = -1)
+                model = lgbm.LGBMRegressor(n_estimators=1000, learning_rate = 0.05, objective='regression',verbose = -1)
 
             else:
                 raise ValueError('Task must be either "classification" or "regression"')
@@ -319,7 +326,7 @@ class FeatureSelector():
                 model.fit(features, labels)
 
             # Record the feature importances
-            feature_importance_values += model.feature_importances_ / n_iterations
+            feature_importance_values += model.feature_importances_ / n_iterations  #?????
 
         feature_importances = pd.DataFrame({'feature': feature_names, 'importance': feature_importance_values})
 
@@ -350,7 +357,7 @@ class FeatureSelector():
 
         Parameters
         --------
-        cumulative_importance : float between 0 and 1
+        cumulative_importance: float between 0 and 1
             The fraction of cumulative importance to account for 
 
         """
@@ -363,7 +370,7 @@ class FeatureSelector():
                                          Call the `identify_zero_importance` method first.""")
             
         # Make sure most important features are on top
-        self.feature_importances = self.feature_importances.sort_values('cumulative_importance')
+        self.feature_importances = self.feature_importances.sort_values('cumulative_importance') #sorted from low to large 
 
         # Identify the features not needed to reach the cumulative_importance
         record_low_importance = self.feature_importances[self.feature_importances['cumulative_importance'] > cumulative_importance]
@@ -386,7 +393,7 @@ class FeatureSelector():
         --------
             
         selection_params : dict
-           Parameters to use in the five feature selection methhods.
+           Parameters to use in the five feature selection methods.
            Params must contain the keys ['missing_threshold', 'correlation_threshold', 'eval_metric', 'task', 'cumulative_importance']
         
         """
@@ -417,7 +424,7 @@ class FeatureSelector():
         self.all_identified = set(list(chain(*list(self.ops.values()))))
         print('Total of %d features identified for removal' % len(self.all_identified))
         
-        if not keep_one_hot:
+        if not keep_one_hot: #not one hot 
             if self.one_hot_features is None:
                 print('Data has not been one-hot encoded')
             else:
@@ -445,14 +452,12 @@ class FeatureSelector():
             data : dataframe
                 Dataframe with identified features removed
                 
-        
         Notes 
         --------
             - If feature importances are used, the one-hot encoded columns will be added to the data (and then may be removed)
             - Check the features that will be removed before transforming data!
         
         """
-        
         
         features_to_drop = []
       
@@ -461,7 +466,7 @@ class FeatureSelector():
             # Need to use one-hot encoded data as well
             data = self.data_all
                                           
-            print('{} methods have been run\n'.format(list(self.ops.keys())))
+            print('{} methods have been run\n'.format(list(self.ops.keys()))) # five methods or some else
             
             # Find the unique features to drop
             features_to_drop = set(list(chain(*list(self.ops.values()))))
@@ -485,12 +490,15 @@ class FeatureSelector():
                 else:
                     features_to_drop.append(self.ops[method])
         
-            # Find the unique features to drop
+            # Find the unique features to drop(iterate many methods)
             features_to_drop = set(list(chain(*features_to_drop)))
-            
+
+        # if data = self.data, then no one hot feature in features_to_drop 
+        # data = data.drop(columns = features_to_drop) only drop original feature,no problem
+        # else drop feature original features and one hot features
         features_to_drop = list(features_to_drop)
             
-        if not keep_one_hot:
+        if not keep_one_hot: # keep_one_hot = False
             
             if self.one_hot_features is None:
                 print('Data has not been one-hot encoded')
@@ -520,9 +528,10 @@ class FeatureSelector():
         plt.style.use('seaborn-white')
         plt.figure(figsize = (7, 5))
         plt.hist(self.missing_stats['missing_fraction'], bins = np.linspace(0, 1, 11), edgecolor = 'k', color = 'red', linewidth = 1.5)
-        plt.xticks(np.linspace(0, 1, 11));
-        plt.xlabel('Missing Fraction', size = 14); plt.ylabel('Count of Features', size = 14); 
-        plt.title("Fraction of Missing Values Histogram", size = 16);
+        plt.xticks(np.linspace(0, 1, 11))
+        plt.xlabel('Missing Fraction', size = 14) 
+        plt.ylabel('Count of Features', size = 14)
+        plt.title("Fraction of Missing Values Histogram", size = 16)
         
     
     def plot_unique(self):
@@ -534,8 +543,8 @@ class FeatureSelector():
 
         # Histogram of number of unique values
         self.unique_stats.plot.hist(edgecolor = 'k', figsize = (7, 5))
-        plt.ylabel('Frequency', size = 14); plt.xlabel('Unique Values', size = 14); 
-        plt.title('Number of Unique Values Histogram', size = 16);
+        plt.ylabel('Frequency', size = 14); plt.xlabel('Unique Values', size = 14) 
+        plt.title('Number of Unique Values Histogram', size = 16)
         
     
     def plot_collinear(self, plot_all = False):
@@ -569,7 +578,7 @@ class FeatureSelector():
 	        title = "Correlations Above Threshold"
 
        
-        f, ax = plt.subplots(figsize=(10, 8))
+        f, ax = plt.subplots(figsize=(20, 16))
         
         # Diverging colormap
         cmap = sns.diverging_palette(220, 10, as_cmap=True)
@@ -579,12 +588,12 @@ class FeatureSelector():
                     linewidths=.25, cbar_kws={"shrink": 0.6})
 
         # Set the ylabels 
-        ax.set_yticks([x + 0.5 for x in list(range(corr_matrix_plot.shape[0]))])
-        ax.set_yticklabels(list(corr_matrix_plot.index), size = int(160 / corr_matrix_plot.shape[0]));
+        ax.set_yticks([x + 0.5 for x in list(range(corr_matrix_plot.shape[0]))]) #grid position [0.5 1.5 ...]
+        ax.set_yticklabels(list(corr_matrix_plot.index), size = int(160 / corr_matrix_plot.shape[0]))
 
         # Set the xlabels 
-        ax.set_xticks([x + 0.5 for x in list(range(corr_matrix_plot.shape[1]))])
-        ax.set_xticklabels(list(corr_matrix_plot.columns), size = int(160 / corr_matrix_plot.shape[1]));
+        ax.set_xticks([x + 0.5 for x in list(range(corr_matrix_plot.shape[1]))]) #grid position [0.5 1.5 ...]
+        ax.set_xticklabels(list(corr_matrix_plot.columns), size = int(160 / corr_matrix_plot.shape[1]))
         plt.title(title, size = 14)
         
     def plot_feature_importances(self, plot_n = 15, threshold = None):
@@ -627,24 +636,25 @@ class FeatureSelector():
         ax.set_yticklabels(self.feature_importances['feature'][:plot_n], size = 12)
 
         # Plot labeling
-        plt.xlabel('Normalized Importance', size = 16); plt.title('Feature Importances', size = 18)
+        plt.xlabel('Normalized Importance', size = 16)
+        plt.title('Feature Importances', size = 18)
         plt.show()
 
         # Cumulative importance plot
         plt.figure(figsize = (6, 4))
         plt.plot(list(range(1, len(self.feature_importances) + 1)), self.feature_importances['cumulative_importance'], 'r-')
-        plt.xlabel('Number of Features', size = 14); plt.ylabel('Cumulative Importance', size = 14); 
-        plt.title('Cumulative Feature Importance', size = 16);
+        plt.xlabel('Number of Features', size = 14)
+        plt.ylabel('Cumulative Importance', size = 14) 
+        plt.title('Cumulative Feature Importance', size = 16)
 
         if threshold:
 
             # Index of minimum number of features needed for cumulative importance threshold
             # np.where returns the index so need to add 1 to have correct number
             importance_index = np.min(np.where(self.feature_importances['cumulative_importance'] > threshold))
-            plt.vlines(x = importance_index + 1, ymin = 0, ymax = 1, linestyles='--', colors = 'blue')
-            plt.show();
-
+            plt.vlines(x = importance_index + 1, ymin = 0, ymax = 1, linestyles='--', colors = 'blue') #plot a vertical line
+            plt.show()
             print('%d features required for %0.2f of cumulative importance' % (importance_index + 1, threshold))
 
-    def reset_plot(self):
+    def reset_plot(self): # return to default set
         plt.rcParams = plt.rcParamsDefault
